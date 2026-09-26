@@ -100,6 +100,8 @@ final class TextInsertionService {
     private var correctionSession: CorrectionObservationSession?
     /// Result of the last AXManualAccessibility request per process, shown in delivery diagnostics.
     private var manualAccessibilityResults: [pid_t: AXError] = [:]
+    /// Result of the AXEnhancedUserInterface fallback per process, shown in delivery diagnostics.
+    private var enhancedUserInterfaceResults: [pid_t: AXError] = [:]
     private var correctionObserver: AXObserver?
     private var correctionRunLoopSource: CFRunLoopSource?
     private var correctionObserverRetain: Unmanaged<TextInsertionService>?
@@ -204,6 +206,9 @@ final class TextInsertionService {
               let application = NSWorkspace.shared.frontmostApplication,
               !isExcludedOrUnverifiable(application.bundleIdentifier) else { return }
         enableManualAccessibility(for: application.processIdentifier)
+        if !exposesFocusedElement(application.processIdentifier) {
+            enableEnhancedUserInterfaceIfNeeded(for: application.processIdentifier)
+        }
     }
 
     private func enableManualAccessibility(for processIdentifier: pid_t) {
@@ -214,6 +219,32 @@ final class TextInsertionService {
             kCFBooleanTrue
         )
         manualAccessibilityResults[processIdentifier] = result
+    }
+
+    /// Chromium-based apps that are not Electron, such as the ChatGPT app, reject
+    /// AXManualAccessibility as unsupported and only build their accessibility tree once an
+    /// assistive client sets AXEnhancedUserInterface. That attribute also changes AppKit behavior
+    /// (for example, window animations), so it is only set after AXManualAccessibility was
+    /// rejected and the app still hides its focused element.
+    private func enableEnhancedUserInterfaceIfNeeded(for processIdentifier: pid_t) {
+        guard manualAccessibilityResults[processIdentifier] == .attributeUnsupported,
+              enhancedUserInterfaceResults[processIdentifier] != .success else { return }
+        let applicationElement = AXUIElementCreateApplication(processIdentifier)
+        enhancedUserInterfaceResults[processIdentifier] = AXUIElementSetAttributeValue(
+            applicationElement,
+            "AXEnhancedUserInterface" as CFString,
+            kCFBooleanTrue
+        )
+    }
+
+    private func exposesFocusedElement(_ processIdentifier: pid_t) -> Bool {
+        var focusedValue: CFTypeRef?
+        let applicationElement = AXUIElementCreateApplication(processIdentifier)
+        return AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedValue
+        ) == .success && focusedValue != nil
     }
 
     /// Reads the field's length and caret so an Accessibility insertion can be verified.
@@ -479,9 +510,15 @@ final class TextInsertionService {
         var readyFocusType = current?.focusedElementType ?? "Unavailable (no frontmost application)"
         if let processIdentifier = current?.snapshot.processIdentifier,
            let result = manualAccessibilityResults[processIdentifier] {
-            readyFocusType += result == .success
-                ? " (app accessibility enabled)"
-                : " (app did not accept AXManualAccessibility, AXError \(result.rawValue))"
+            if result == .success {
+                readyFocusType += " (app accessibility enabled)"
+            } else if let enhancedResult = enhancedUserInterfaceResults[processIdentifier] {
+                readyFocusType += enhancedResult == .success
+                    ? " (app accessibility enabled with AXEnhancedUserInterface)"
+                    : " (app did not accept AXManualAccessibility, AXError \(result.rawValue), or AXEnhancedUserInterface, AXError \(enhancedResult.rawValue))"
+            } else {
+                readyFocusType += " (app did not accept AXManualAccessibility, AXError \(result.rawValue))"
+            }
         }
         return TextInsertionDiagnostic(
             appAtDictationStop: stoppedApp,
@@ -842,6 +879,9 @@ final class TextInsertionService {
             // enable it (never for excluded apps) and ask the frontmost application directly.
             guard !isExcludedOrUnverifiable(application.bundleIdentifier) else { return nil }
             enableManualAccessibility(for: application.processIdentifier)
+            if !exposesFocusedElement(application.processIdentifier) {
+                enableEnhancedUserInterfaceIfNeeded(for: application.processIdentifier)
+            }
             focusedValue = nil
             let applicationElement = AXUIElementCreateApplication(application.processIdentifier)
             guard AXUIElementCopyAttributeValue(
