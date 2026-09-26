@@ -28,7 +28,7 @@ final class ModelManifestTests: XCTestCase {
         XCTAssertEqual(ids, ["apple-speech", "parakeet-v3", "whisper-large-v3-turbo"])
     }
 
-    func testPinnedDownloadsHaveExactByteTotalsAndOnlyParakeetHasAnOptionalAddOn() throws {
+    func testPinnedDownloadsHaveExactByteTotalsAndParakeetVocabularyIsRequired() throws {
         let manifest = try loadManifest()
         let downloads = try XCTUnwrap(manifest["downloads"] as? [[String: Any]])
         let totals = Dictionary(uniqueKeysWithValues: downloads.compactMap { item -> (String, Int)? in
@@ -36,9 +36,9 @@ final class ModelManifestTests: XCTestCase {
             return (id, bytes)
         })
         XCTAssertEqual(totals["parakeet-v3"], 632_169_729)
-        XCTAssertEqual(totals["parakeet-v3-ctc-vocab"], 2_373_826_395)
+        XCTAssertEqual(totals["parakeet-ctc-0.6b-coreml"], 2_374_186_501)
         XCTAssertEqual(totals["whisper-large-v3-turbo"], 3_199_676_429)
-        XCTAssertEqual(downloads.first(where: { $0["id"] as? String == "parakeet-v3-ctc-vocab" })?["optional"] as? Bool, true)
+        XCTAssertEqual(downloads.first(where: { $0["id"] as? String == "parakeet-ctc-0.6b-coreml" })?["optional"] as? Bool, false)
     }
 
     func testEveryDownloadFileIsPinnedAndHasAValidSha256() throws {
