@@ -1,8 +1,8 @@
-name: EchoType CI
+name: EchoFlow CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feat/**"]
   pull_request:
   workflow_dispatch:
 
@@ -11,11 +11,13 @@ permissions:
 
 jobs:
   test:
-    name: Test on macOS 26
+    name: Test, package, and smoke-test on macOS 26
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Verify runner architecture and Xcode SDK
         run: |
           test "$(uname -m)" = "arm64"
@@ -24,5 +26,51 @@ jobs:
           printf 'macOS SDK: %s\n' "$sdk_version"
           sdk_major="${sdk_version%%.*}"
           test "$sdk_major" -ge 26
+      - name: Create generated speech sample
+        run: say -o "$RUNNER_TEMP/echoflow-sample.aiff" "Echo Flow stores my speech on this Mac."
       - name: Run tests
+        env:
+          ECHOFLOW_TEST_AUDIO: ${{ runner.temp }}/echoflow-sample.aiff
         run: swift test
+      - name: Build, package, and verify native app
+        run: bash Scripts/package-app.sh
+      - name: Launch packaged app from a clean location without .build
+        run: bash Scripts/smoke-test.sh
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: EchoFlow-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/EchoFlow.zip
+            dist/EchoFlow.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  whisper-benchmark:
+    if: github.event_name == 'workflow_dispatch'
+    name: Pinned compiled Whisper tiny benchmark on macOS 26
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Confirm Apple Silicon runner
+        run: test "$(uname -m)" = "arm64"
+      - name: Download and verify pinned compiled model and tokenizer
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 Scripts/benchmark-whisper.py \
+            --directory "$RUNNER_TEMP/whisper-tiny-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Generate public synthetic speech (runner temp only)
+        run: |
+          say -o "$RUNNER_TEMP/whisper-sample.aiff" \
+            "The quick brown fox jumps over the lazy dog."
+          afconvert -f WAVE -d LEI16@16000 -c 1 \
+            "$RUNNER_TEMP/whisper-sample.aiff" "$RUNNER_TEMP/whisper-sample.wav"
+      - name: Run opt-in uncached versus cache-hit real inference
+        env:
+          ECHOFLOW_WHISPER_MODEL_DIRECTORY: ${{ runner.temp }}/whisper-tiny-${{ github.run_id }}-${{ github.run_attempt }}
+          ECHOFLOW_WHISPER_BENCH_AUDIO: ${{ runner.temp }}/whisper-sample.wav
+        run: swift test --filter WhisperPerformanceTests

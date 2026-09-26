@@ -46,6 +46,81 @@ final class TextInsertionPolicyTests: XCTestCase {
         )
     }
 
+    func testEditableComboBoxUsesAccessibilityInsertion() {
+        let target = TextInsertionSnapshot(
+            processIdentifier: 42,
+            bundleIdentifier: "com.apple.Safari",
+            focusedRole: "AXComboBox",
+            focusedElementIsEditable: true
+        )
+
+        XCTAssertEqual(
+            policy.decision(captured: target, current: target, sameFocusedElement: true),
+            .insert
+        )
+    }
+
+    func testSafariComboBoxUsesKeyboardFallbackWhenEditabilityIsFalseOrUnavailable() {
+        for isEditable in [false, nil] {
+            let target = TextInsertionSnapshot(
+                processIdentifier: 42,
+                bundleIdentifier: "com.apple.Safari",
+                focusedRole: "AXComboBox",
+                focusedElementIsEditable: isEditable
+            )
+
+            XCTAssertEqual(
+                policy.decision(captured: target, current: target, sameFocusedElement: true),
+                .keyboardEventFallback
+            )
+            XCTAssertEqual(
+                policy.decision(captured: target, current: target, sameFocusedElement: false),
+                .blocked(.unsupportedField)
+            )
+        }
+    }
+
+    func testNonEditableComboBoxOutsideSafariRemainsBlocked() {
+        let target = TextInsertionSnapshot(
+            processIdentifier: 42,
+            bundleIdentifier: "com.example.editor",
+            focusedRole: "AXComboBox",
+            focusedElementIsEditable: false
+        )
+
+        XCTAssertEqual(
+            policy.decision(captured: target, current: target, sameFocusedElement: true),
+            .blocked(.unsupportedField)
+        )
+    }
+
+    func testMicrosoftWordSplitGroupUsesKeyboardFallbackOnlyWhileSameElementStaysFocused() {
+        let target = TextInsertionSnapshot(
+            processIdentifier: 42,
+            bundleIdentifier: "com.microsoft.Word",
+            focusedRole: "AXSplitGroup"
+        )
+
+        XCTAssertEqual(
+            policy.decision(captured: target, current: target, sameFocusedElement: true),
+            .keyboardEventFallback
+        )
+        XCTAssertEqual(
+            policy.decision(captured: target, current: target, sameFocusedElement: false),
+            .blocked(.unsupportedField)
+        )
+
+        let otherApp = TextInsertionSnapshot(
+            processIdentifier: 84,
+            bundleIdentifier: "com.apple.Safari",
+            focusedRole: "AXSplitGroup"
+        )
+        XCTAssertEqual(
+            policy.decision(captured: otherApp, current: otherApp, sameFocusedElement: true),
+            .blocked(.unsupportedField)
+        )
+    }
+
     func testSecureTextFieldIsNeverEligible() {
         let target = TextInsertionSnapshot(
             processIdentifier: 42,

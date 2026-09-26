@@ -6,19 +6,22 @@ public struct TextInsertionSnapshot: Equatable, Sendable {
     public let applicationName: String?
     public let focusedRole: String?
     public let focusedSubrole: String?
+    public let focusedElementIsEditable: Bool?
 
     public init(
         processIdentifier: Int32,
         bundleIdentifier: String?,
         focusedRole: String?,
         focusedSubrole: String? = nil,
-        applicationName: String? = nil
+        applicationName: String? = nil,
+        focusedElementIsEditable: Bool? = nil
     ) {
         self.processIdentifier = processIdentifier
         self.bundleIdentifier = bundleIdentifier
         self.applicationName = applicationName
         self.focusedRole = focusedRole
         self.focusedSubrole = focusedSubrole
+        self.focusedElementIsEditable = focusedElementIsEditable
     }
 }
 
@@ -120,7 +123,33 @@ public struct TextInsertionPolicy: Sendable {
         guard !isSecureField(captured), !isSecureField(current) else {
             return .blocked(.secureField)
         }
-        guard let role = current.focusedRole, textInputRoles.contains(role) else {
+        guard let role = current.focusedRole else {
+            return .blocked(.unsupportedField)
+        }
+
+        if role == "AXSplitGroup" {
+            // Microsoft Word can report its focused document canvas as a split group.
+            // This generic role is accepted only for Word and only while the exact focused
+            // element remains stable; bypass AX text-setting and use the existing keyboard path.
+            guard sameFocusedElement,
+                  current.bundleIdentifier?.caseInsensitiveCompare("com.microsoft.Word") == .orderedSame else {
+                return .blocked(.unsupportedField)
+            }
+            return .keyboardEventFallback
+        }
+
+        let safariComboBox = role == "AXComboBox"
+            && current.bundleIdentifier?.caseInsensitiveCompare("com.apple.Safari") == .orderedSame
+        if safariComboBox, current.focusedElementIsEditable != true {
+            // Safari may expose editable webpage controls such as Google's central search box
+            // as a combo box without a usable AXIsEditable value. Use keyboard events only while
+            // the exact focused element is unchanged; secure fields were rejected above.
+            guard sameFocusedElement else { return .blocked(.unsupportedField) }
+            return .keyboardEventFallback
+        }
+
+        let editableComboBox = role == "AXComboBox" && current.focusedElementIsEditable == true
+        guard textInputRoles.contains(role) || editableComboBox else {
             return .blocked(.unsupportedField)
         }
         return sameFocusedElement ? .insert : .keyboardEventFallback

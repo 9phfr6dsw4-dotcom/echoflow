@@ -867,7 +867,8 @@ final class TextInsertionService {
             bundleIdentifier: application.bundleIdentifier,
             focusedRole: role,
             focusedSubrole: subrole,
-            applicationName: application.localizedName
+            applicationName: application.localizedName,
+            focusedElementIsEditable: accessibilityAttributeBoolean(kAXIsEditableAttribute, of: focusedElement)
         )
         return CapturedInsertionTarget(snapshot: snapshot, focusedElement: focusedElement)
     }
@@ -955,6 +956,16 @@ final class TextInsertionService {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
         return value as? String
+    }
+
+    private func accessibilityAttributeBoolean(_ attribute: String, of element: AXUIElement) -> Bool? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value,
+              CFGetTypeID(value) == CFBooleanGetTypeID() else {
+            return nil
+        }
+        return CFBooleanGetValue(value as! CFBoolean)
     }
 
     private func accessibilityRange(
