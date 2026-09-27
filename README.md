@@ -8,6 +8,13 @@
 
 <p align="center"><a href="https://github.com/9phfr6dsw4-dotcom/echoflow/releases/latest"><strong>Download the latest release</strong></a> · macOS 26+</p>
 
+<p align="center">
+  <a href="https://github.com/9phfr6dsw4-dotcom/echoflow/releases/latest"><img src="https://img.shields.io/github/v/release/9phfr6dsw4-dotcom/echoflow?display_name=tag" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-26%2B-black?logo=apple" alt="macOS 26 or later">
+  <a href="https://github.com/9phfr6dsw4-dotcom/echoflow/actions/workflows/macos-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/9phfr6dsw4-dotcom/echoflow/macos-ci.yml?branch=main&amp;label=macOS%20CI" alt="macOS CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+</p>
+
 ## Features
 
 - Dictate with Apple Speech, Parakeet v3, or Whisper large-v3-turbo. Models are installed only when you choose them.
