@@ -195,12 +195,14 @@ struct FileTranscriptionView: View {
 
     @ViewBuilder
     private var recommendation: some View {
-        if model.engineID == ModelSelection.parakeetEngineID && model.fileCleanup.removeFillerWords {
-            Label("Recommended setup: Parakeet with filler-word removal.", systemImage: "checkmark.seal")
+        let cleanup = model.fileCleanup
+        if model.engineID == ModelSelection.parakeetEngineID && cleanup.removeFillerWords
+            && cleanup.removeFalseStarts && cleanup.convertSpokenNumbersToDigits {
+            Label("Recommended setup: Parakeet, with filler words, false starts and numbers to digits turned on.", systemImage: "checkmark.seal")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else {
-            Label("Recommended: Parakeet, with Remove filler words turned on below.", systemImage: "lightbulb")
+            Label("Recommended: Parakeet, with Remove filler words, Remove repeated false starts and Convert spoken numbers to digits turned on below.", systemImage: "lightbulb")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

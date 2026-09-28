@@ -17,6 +17,11 @@ enum SpeakerDetector {
     ) async throws -> [SpeakerTurn] {
         var config = OfflineDiarizerConfig.default
         config.clustering.numSpeakers = speakerCount
+        // Denser analysis windows and shorter minimum segments catch quick back-and-forth and
+        // short interjections (FluidAudio's documented setting for rapid exchanges), at the cost
+        // of some extra time.
+        config.segmentation.stepRatio = 0.1
+        config.embedding.minSegmentDurationSeconds = 0.5
         let manager = OfflineDiarizerManager(config: config)
         try await manager.prepareModels()
         try Task.checkCancellation()
