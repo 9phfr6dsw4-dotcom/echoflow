@@ -41,6 +41,58 @@ final class FileTranscriptDocumentTests: XCTestCase {
         XCTAssertEqual(blocks.map(\.text), ["one two three", "four"])
     }
 
+    func testSpeakerChangesMoveToTheNearestSentenceEnd() {
+        let late = TranscriptBlockBuilder.blocks(
+            from: [
+                TimedTextPiece(text: " Ready?", start: 0.0, end: 0.4),
+                TimedTextPiece(text: " Well,", start: 0.5, end: 0.7),
+                TimedTextPiece(text: " I", start: 0.7, end: 0.8),
+                TimedTextPiece(text: " agree", start: 0.8, end: 1.2),
+                TimedTextPiece(text: " because", start: 1.5, end: 1.8),
+                TimedTextPiece(text: " yes.", start: 1.8, end: 2.2)
+            ],
+            speakerTurns: [
+                SpeakerTurn(speakerID: "A", start: 0, end: 1.45),
+                SpeakerTurn(speakerID: "B", start: 1.45, end: 3)
+            ]
+        )
+        XCTAssertEqual(late.map(\.speakerID), ["A", "B"])
+        XCTAssertEqual(late.map(\.text), ["Ready?", "Well, I agree because yes."])
+
+        let early = TranscriptBlockBuilder.blocks(
+            from: [
+                TimedTextPiece(text: " As", start: 0.0, end: 0.3),
+                TimedTextPiece(text: " Zhou", start: 0.3, end: 0.6),
+                TimedTextPiece(text: " Enlai", start: 1.0, end: 1.3),
+                TimedTextPiece(text: " said.", start: 1.3, end: 1.6),
+                TimedTextPiece(text: " Right.", start: 2.0, end: 2.3),
+                TimedTextPiece(text: " Thanks.", start: 2.4, end: 2.8)
+            ],
+            speakerTurns: [
+                SpeakerTurn(speakerID: "A", start: 0, end: 0.8),
+                SpeakerTurn(speakerID: "B", start: 0.8, end: 3)
+            ]
+        )
+        XCTAssertEqual(early.map(\.text), ["As Zhou Enlai said.", "Right. Thanks."])
+
+        let interjection = TranscriptBlockBuilder.blocks(
+            from: [
+                TimedTextPiece(text: " Go", start: 0.0, end: 0.3),
+                TimedTextPiece(text: " on.", start: 0.3, end: 0.6),
+                TimedTextPiece(text: " Yes.", start: 0.8, end: 1.2),
+                TimedTextPiece(text: " Then", start: 1.4, end: 1.7),
+                TimedTextPiece(text: " done.", start: 1.7, end: 2.0)
+            ],
+            speakerTurns: [
+                SpeakerTurn(speakerID: "A", start: 0, end: 0.7),
+                SpeakerTurn(speakerID: "B", start: 0.7, end: 1.3),
+                SpeakerTurn(speakerID: "A", start: 1.3, end: 2.1)
+            ]
+        )
+        XCTAssertEqual(interjection.map(\.speakerID), ["A", "B", "A"])
+        XCTAssertEqual(interjection.map(\.text), ["Go on.", "Yes.", "Then done."])
+    }
+
     func testParagraphsWithoutSpeakersBreakAtASentenceAfterThirtySeconds() {
         var pieces: [TimedTextPiece] = []
         for second in 0..<70 {

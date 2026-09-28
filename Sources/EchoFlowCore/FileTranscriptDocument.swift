@@ -42,6 +42,10 @@ public enum TranscriptBlockBuilder {
     /// A single word given to a different speaker than the words on both sides of it is treated
     /// as a timing wobble when it is shorter than this.
     public static let speakerFlipMaximumSeconds: TimeInterval = 1
+    /// Speaker detection often marks a change a word or two late. A change that doesn't fall at a
+    /// sentence end is moved to the nearest one within this many words and seconds.
+    public static let speakerSnapMaximumWords = 12
+    public static let speakerSnapMaximumSeconds: TimeInterval = 3.5
 
     struct Word: Equatable {
         var text: String
@@ -60,6 +64,7 @@ public enum TranscriptBlockBuilder {
                 words[index].speakerID = speaker(forStart: words[index].start, end: words[index].end, in: turns)
             }
             smoothSpeakerFlips(&words)
+            snapSpeakerChangesToSentences(&words)
         }
         let target = hasSpeakers ? speakerParagraphTargetSeconds : paragraphTargetSeconds
         let limit = hasSpeakers ? speakerParagraphLimitSeconds : paragraphLimitSeconds
@@ -130,10 +135,56 @@ public enum TranscriptBlockBuilder {
         for index in 1..<(words.count - 1) {
             let before = words[index - 1].speakerID
             let after = words[index + 1].speakerID
-            if before == after, words[index].speakerID != before,
+            // A one-word sentence of its own ("Yes.") is a real interjection, not a wobble.
+            let isOwnSentence = endsSentence(words[index - 1].text) && endsSentence(words[index].text)
+            if before == after, words[index].speakerID != before, !isOwnSentence,
                words[index].end - words[index].start < speakerFlipMaximumSeconds {
                 words[index].speakerID = before
             }
+        }
+    }
+
+    /// Moves each speaker change that doesn't fall at a sentence end to the nearest one: first
+    /// backwards (the new speaker's opening words were left with the previous speaker), otherwise
+    /// forwards (the previous speaker's last words went to the new speaker). A short turn that
+    /// is a complete sentence ("Yes.") is left alone.
+    static func snapSpeakerChangesToSentences(_ words: inout [Word]) {
+        var index = 1
+        while index < words.count {
+            guard let previous = words[index - 1].speakerID, let next = words[index].speakerID,
+                  previous != next, !endsSentence(words[index - 1].text) else {
+                index += 1
+                continue
+            }
+            var moved = false
+            var candidate = index - 2
+            while candidate >= 0,
+                  index - 1 - candidate <= speakerSnapMaximumWords,
+                  words[candidate].speakerID == previous,
+                  words[index - 1].end - words[candidate + 1].start <= speakerSnapMaximumSeconds {
+                if endsSentence(words[candidate].text) {
+                    for position in (candidate + 1)...(index - 1) { words[position].speakerID = next }
+                    moved = true
+                    break
+                }
+                candidate -= 1
+            }
+            if !moved {
+                var ahead = index
+                while ahead < words.count,
+                      ahead - index + 1 <= speakerSnapMaximumWords,
+                      words[ahead].speakerID == next,
+                      words[ahead].end - words[index].start <= speakerSnapMaximumSeconds {
+                    if endsSentence(words[ahead].text) {
+                        if ahead + 1 < words.count, words[ahead + 1].speakerID == next {
+                            for position in index...ahead { words[position].speakerID = previous }
+                        }
+                        break
+                    }
+                    ahead += 1
+                }
+            }
+            index += 1
         }
     }
 
