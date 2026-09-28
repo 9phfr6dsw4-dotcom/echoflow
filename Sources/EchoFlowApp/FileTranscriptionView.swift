@@ -9,8 +9,6 @@ struct FileTranscriptionView: View {
     @State private var isDropTargeted = false
     @State private var pendingDeletion: FileTranscriptDocument?
 
-    private var cleanup: TranscriptTextCleanupSettings { runtime.textCleanup.settings }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -152,6 +150,10 @@ struct FileTranscriptionView: View {
 
                 Divider()
 
+                cleanupOptions
+
+                Divider()
+
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 16) {
                         Toggle("Detect speakers", isOn: $model.detectSpeakers)
@@ -185,7 +187,7 @@ struct FileTranscriptionView: View {
         case ModelSelection.appleSpeechEngineID:
             return "Fast. Can miss unusual names."
         case FileTranscriptionViewModel.whisperEngineID:
-            return "Much slower (minutes for a long file) and tidies up false starts. Dictation that uses Whisper waits while a file is transcribing."
+            return "By far the slowest engine: a long file can take several minutes. It tidies up false starts on its own, but can skip or add a few words. Dictation that uses Whisper waits until the file is done."
         default:
             return ""
         }
@@ -193,24 +195,50 @@ struct FileTranscriptionView: View {
 
     @ViewBuilder
     private var recommendation: some View {
-        let usingRecommended = model.engineID == ModelSelection.parakeetEngineID && cleanup.removeFillerWords
-        if usingRecommended {
+        if model.engineID == ModelSelection.parakeetEngineID && model.fileCleanup.removeFillerWords {
             Label("Recommended setup: Parakeet with filler-word removal.", systemImage: "checkmark.seal")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else {
-            Label("Recommended: Parakeet, with Remove filler words turned on in Settings → Text cleanup.", systemImage: "lightbulb")
+            Label("Recommended: Parakeet, with Remove filler words turned on below.", systemImage: "lightbulb")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        Text("Text cleanup for files: filler words \(onOff(cleanup.removeFillerWords)) · false starts \(onOff(cleanup.removeFalseStarts)) · numbers to digits \(onOff(cleanup.convertSpokenNumbersToDigits))\(cleanup.convertSpokenNumbersToDigits ? " (years and 10 and up become digits; one to nine stay words)" : "").")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func onOff(_ value: Bool) -> String { value ? "on" : "off" }
+    private var cleanupOptions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Text cleanup for transcribed files")
+                .font(.subheadline.weight(.semibold))
+            Toggle("Remove filler words (um, uh)", isOn: $model.fileCleanup.removeFillerWords)
+            Toggle("Remove repeated false starts (\u{201C}with, with\u{201D})", isOn: $model.fileCleanup.removeFalseStarts)
+            Toggle("Convert spoken numbers to digits", isOn: $model.fileCleanup.convertSpokenNumbersToDigits)
+            Text("Years and numbers of 10 or more become digits (1789, 600,000); one to nine stay as words.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 20)
+            Toggle("Polish punctuation with Apple Intelligence", isOn: $model.fileCleanup.aiCleanupEnabled)
+                .disabled(model.polishUnavailableMessage != nil)
+            Text("Fixes punctuation, capitals and small slips, one paragraph at a time, on this Mac. This adds time (often a minute or two for a long file) and may occasionally change the wording; a paragraph it changes too much is kept as transcribed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 20)
+            if let message = model.polishUnavailableMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .padding(.leading, 20)
+            }
+            Label("These switches only affect Transcribe File. Dictation uses Settings → Text cleanup, and neither changes the other.", systemImage: "info.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .disabled(model.isBusy)
+    }
 
     // MARK: Progress
 
@@ -242,7 +270,7 @@ struct FileTranscriptionView: View {
                         Button("Cancel") { model.cancel() }
                     }
                     if model.runningEngineIsWhisper {
-                        Text("Dictation that uses Whisper waits until this file is finished.")
+                        Text("Whisper is by far the slowest engine, so a long file can take several minutes. Dictation that uses Whisper waits until this file is done.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -326,6 +354,12 @@ struct FileTranscriptionView: View {
                     .disabled(model.isBusy)
                 }
 
+                if let polishNote = model.polishNote {
+                    Label(polishNote, systemImage: "sparkles")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if document.subtitleSRT.isEmpty {
                     Text("This transcript has no timing information, so subtitles aren't available for it.")
                         .font(.caption)

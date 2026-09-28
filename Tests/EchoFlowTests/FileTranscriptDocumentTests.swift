@@ -196,6 +196,46 @@ final class FileTranscriptDocumentTests: XCTestCase {
         XCTAssertEqual(untimed.subtitleSRT, "")
     }
 
+    func testFillersAreRemovedBeforeFalseStartsAndSentenceCapitalsReturn() {
+        var cleanup = TranscriptTextCleanupSettings()
+        cleanup.removeFillerWords = true
+        cleanup.removeFalseStarts = true
+        XCTAssertEqual(
+            FileTranscriptComposer.cleanedText("I agree with uh with that, to um to just wipe it in in in in this sense.", settings: cleanup),
+            "I agree with that, to just wipe it in this sense."
+        )
+        XCTAssertEqual(
+            FileTranscriptComposer.cleanedText("Right. uh how do you think? um, so it goes. the idea that... members of it", settings: cleanup),
+            "Right. How do you think? So it goes. The idea that... members of it"
+        )
+        XCTAssertEqual(
+            FileTranscriptComposer.cleanedText("the idea. uh with with it", settings: TranscriptTextCleanupSettings()),
+            "the idea. uh with with it"
+        )
+    }
+
+    func testPolishKeepsSmallEditsAndRejectsRewrites() {
+        let original = "so when we think about the impact of the french revolution on english culture we tend to think of wordsworth"
+        XCTAssertEqual(
+            FileTranscriptPolishPolicy.acceptedText(
+                "<transcript>So when we think about the impact of the French Revolution on English culture, we tend to think of Wordsworth.</transcript>",
+                original: original
+            ),
+            "So when we think about the impact of the French Revolution on English culture, we tend to think of Wordsworth."
+        )
+        XCTAssertNil(FileTranscriptPolishPolicy.acceptedText(
+            "The French Revolution deeply shaped English culture, as Wordsworth's poetry shows.",
+            original: original
+        ))
+        XCTAssertEqual(
+            FileTranscriptPolishPolicy.acceptedText("“Hello there, friend.”", original: "hello there friend"),
+            "Hello there, friend."
+        )
+        XCTAssertNil(FileTranscriptPolishPolicy.acceptedText("   ", original: "hello there friend"))
+        XCTAssertEqual(FileTranscriptPolishPolicy.wordDistance(["a", "b", "c"], ["a", "x", "c", "d"], limit: 5), 2)
+        XCTAssertEqual(FileTranscriptPolishPolicy.wordDistance(["a"], [], limit: 5), 1)
+    }
+
     func testStoreSavesListsPrunesAndDeletesOnlyItsOwnFiles() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("EchoFlowFileStoreTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

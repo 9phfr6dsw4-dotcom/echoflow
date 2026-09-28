@@ -573,7 +573,7 @@ struct EchoFlowSettingsView: View {
                     get: { textCleanup.settings.convertSpokenNumbersToDigits },
                     set: { textCleanup.setConvertSpokenNumbers($0) }
                 ))
-                Text("These switches are off by default and use local text rules. “Like” is removed only in clear discourse-filler positions; words such as “I like this” are kept. Repeated words and phrases are treated as false starts when that option is on.")
+                Text("These switches apply to dictation only; Transcribe File has its own on its tab. They are off by default and use local text rules. “Like” is removed only in clear discourse-filler positions; words such as “I like this” are kept. Repeated words and phrases are treated as false starts when that option is on.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

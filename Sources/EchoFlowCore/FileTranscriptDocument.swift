@@ -338,21 +338,32 @@ public enum FileTranscriptComposer {
         )
     }
 
-    /// Filler words and false starts use the same local rules as dictation. Numbers use the
-    /// transcript style in `FileTranscriptNumberStyle`, which suits long recordings better.
-    /// Apple Intelligence cleanup and per-app styles are for dictation only.
+    /// Uses the Transcribe File tab's own switches (never the dictation settings). Fillers are
+    /// removed before false starts, so "with uh with" becomes "with", not "with with". Numbers use
+    /// the transcript style in `FileTranscriptNumberStyle`. Sentence capitals are restored after
+    /// cleanup. Apple Intelligence polish runs separately, paragraph by paragraph.
     public static func cleanedText(_ text: String, settings: TranscriptTextCleanupSettings) -> String {
-        var rules = settings
-        rules.convertSpokenNumbersToDigits = false
         var cleaned = text
         if settings.removeFillerWords {
             cleaned = removingStandaloneFillers(from: cleaned)
+            cleaned = TranscriptTextCleanupPolicy.apply(cleaned, settings: TranscriptTextCleanupSettings(removeFillerWords: true))
         }
-        cleaned = TranscriptTextCleanupPolicy.apply(cleaned, settings: rules)
+        if settings.removeFalseStarts {
+            // Repeat so chains such as "in in in in" collapse fully.
+            for _ in 0..<3 {
+                let next = TranscriptTextCleanupPolicy.apply(cleaned, settings: TranscriptTextCleanupSettings(removeFalseStarts: true))
+                if next == cleaned { break }
+                cleaned = next
+            }
+        }
         if settings.convertSpokenNumbersToDigits {
             cleaned = FileTranscriptNumberStyle.apply(cleaned)
         }
         cleaned = TranscriptBlockBuilder.collapsedWhitespace(cleaned)
+        guard settings.removeFillerWords || settings.removeFalseStarts || settings.convertSpokenNumbersToDigits else {
+            return cleaned
+        }
+        cleaned = capitalizingSentenceStarts(cleaned)
         // "Um, in 1789…" becomes "In 1789…", not "in 1789…".
         let original = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let first = cleaned.first, first.isLowercase, original.first?.isUppercase == true,
@@ -360,6 +371,19 @@ public enum FileTranscriptComposer {
             cleaned = first.uppercased() + cleaned.dropFirst()
         }
         return cleaned
+    }
+
+    /// "…the period. how do you…" becomes "…the period. How do you…". A trailing-off ellipsis
+    /// ("the idea that... members") is left alone.
+    static func capitalizingSentenceStarts(_ text: String) -> String {
+        guard let expression = try? NSRegularExpression(pattern: #"(?<![.…])[.?!]\s+([a-z])"#) else { return text }
+        let result = NSMutableString(string: text)
+        let matches = expression.matches(in: text, range: NSRange(location: 0, length: result.length))
+        for match in matches.reversed() {
+            let letterRange = match.range(at: 1)
+            result.replaceCharacters(in: letterRange, with: result.substring(with: letterRange).uppercased())
+        }
+        return result as String
     }
 
     /// Removes a filler that is a sentence of its own ("…nine. Uh. So…"), together with its
@@ -376,6 +400,55 @@ public enum FileTranscriptComposer {
             result = next
         }
         return result
+    }
+}
+
+/// Decides whether an Apple Intelligence edit of one paragraph is safe to use. The edit is
+/// accepted only when it keeps nearly every word: at most one word in ten (and at least two)
+/// may be added, removed or changed. Anything bigger keeps the paragraph as transcribed.
+public enum FileTranscriptPolishPolicy {
+    public static func acceptedText(_ candidate: String, original: String) -> String? {
+        var text = candidate
+            .replacingOccurrences(of: "<transcript>", with: "")
+            .replacingOccurrences(of: "</transcript>", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let quotes: Set<Character> = ["\"", "“", "”"]
+        let trimmedOriginal = original.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let first = text.first, let last = text.last, text.count > 1, quotes.contains(first), quotes.contains(last),
+           !quotes.contains(trimmedOriginal.first ?? " ") {
+            text = String(text.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !text.isEmpty else { return nil }
+        let before = words(in: original)
+        let after = words(in: text)
+        guard !before.isEmpty else { return nil }
+        let allowed = max(2, before.count / 10)
+        guard wordDistance(before, after, limit: allowed) <= allowed else { return nil }
+        return TranscriptBlockBuilder.collapsedWhitespace(text)
+    }
+
+    static func words(in text: String) -> [String] {
+        text.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+    }
+
+    /// Word-level edit distance. Stops early (returning limit + 1) once it must exceed `limit`.
+    static func wordDistance(_ first: [String], _ second: [String], limit: Int) -> Int {
+        if abs(first.count - second.count) > limit { return limit + 1 }
+        var previous = Array(0...second.count)
+        for (row, word) in first.enumerated() {
+            var current = [row + 1] + Array(repeating: 0, count: second.count)
+            var rowMinimum = current[0]
+            for column in 1...max(second.count, 1) where column <= second.count {
+                let cost = word == second[column - 1] ? 0 : 1
+                current[column] = min(previous[column] + 1, current[column - 1] + 1, previous[column - 1] + cost)
+                rowMinimum = min(rowMinimum, current[column])
+            }
+            if rowMinimum > limit { return limit + 1 }
+            previous = current
+        }
+        return previous[second.count]
     }
 }
 

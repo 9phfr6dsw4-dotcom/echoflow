@@ -12,6 +12,7 @@ final class FileTranscriptionViewModel {
         case preparingAudio(fileName: String)
         case transcribing(fileName: String)
         case detectingSpeakers(fileName: String)
+        case polishing(fileName: String)
         case failed(String)
     }
 
@@ -65,6 +66,15 @@ final class FileTranscriptionViewModel {
     static let engineDefaultsKey = "EchoFlow.fileTranscriptionEngineID"
     static let detectSpeakersDefaultsKey = "EchoFlow.fileTranscriptionDetectSpeakers"
     static let speakerCountDefaultsKey = "EchoFlow.fileTranscriptionSpeakerCount"
+    static let cleanupDefaultsKey = "EchoFlow.fileTranscriptionCleanup"
+    /// File transcripts start with fillers and false starts removed and transcript-style numbers;
+    /// Apple Intelligence polish is off until the user turns it on.
+    static let defaultCleanup = TranscriptTextCleanupSettings(
+        removeFillerWords: true,
+        removeFalseStarts: true,
+        convertSpokenNumbersToDigits: true,
+        aiCleanupEnabled: false
+    )
     static let whisperEngineID = "whisper-large-v3-turbo"
 
     private(set) var phase: Phase = .idle
@@ -79,6 +89,10 @@ final class FileTranscriptionViewModel {
     private(set) var historyEnabled = true
     private(set) var retention: TranscriptHistoryRetention = .thirtyDays
     private(set) var saveError: String?
+    /// What Apple Intelligence polish did to the transcript on screen, when it ran.
+    private(set) var polishNote: String?
+    private(set) var polishDone = 0
+    private(set) var polishTotal = 0
 
     /// The Title box. It edits the transcript on screen; before a transcript exists it is the
     /// title for the next one.
@@ -95,6 +109,16 @@ final class FileTranscriptionViewModel {
     var speakerCount: Int {
         didSet { UserDefaults.standard.set(speakerCount, forKey: Self.speakerCountDefaultsKey) }
     }
+    /// Text cleanup for Transcribe File only. Stored separately from the dictation settings in
+    /// Settings → Text cleanup; neither one changes the other. `aiCleanupEnabled` is the
+    /// "Polish with Apple Intelligence" switch.
+    var fileCleanup: TranscriptTextCleanupSettings {
+        didSet {
+            if let data = try? JSONEncoder().encode(fileCleanup) {
+                UserDefaults.standard.set(data, forKey: Self.cleanupDefaultsKey)
+            }
+        }
+    }
 
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var runID = UUID()
@@ -105,11 +129,17 @@ final class FileTranscriptionViewModel {
         engineID = defaults.string(forKey: Self.engineDefaultsKey) ?? ModelSelection.parakeetEngineID
         detectSpeakers = defaults.bool(forKey: Self.detectSpeakersDefaultsKey)
         speakerCount = defaults.integer(forKey: Self.speakerCountDefaultsKey)
+        let savedCleanup = defaults.data(forKey: Self.cleanupDefaultsKey).flatMap { data in
+            try? JSONDecoder().decode(TranscriptTextCleanupSettings.self, from: data)
+        }
+        fileCleanup = savedCleanup ?? Self.defaultCleanup
     }
+
+    var polishUnavailableMessage: String? { TranscriptPolishService.unavailableMessage }
 
     var isBusy: Bool {
         switch phase {
-        case .preparingAudio, .transcribing, .detectingSpeakers: return true
+        case .preparingAudio, .transcribing, .detectingSpeakers, .polishing: return true
         case .idle, .failed: return false
         }
     }
@@ -128,6 +158,8 @@ final class FileTranscriptionViewModel {
                 return "Finding speakers… \(Int((progressFraction * 100).rounded()))%"
             }
             return "Getting speaker detection ready… (the first time, this downloads its model)"
+        case .polishing:
+            return "Polishing with Apple Intelligence… \(polishDone) of \(polishTotal) paragraphs"
         case .idle, .failed:
             return ""
         }
@@ -135,7 +167,8 @@ final class FileTranscriptionViewModel {
 
     var busyFileName: String? {
         switch phase {
-        case .preparingAudio(let fileName), .transcribing(let fileName), .detectingSpeakers(let fileName):
+        case .preparingAudio(let fileName), .transcribing(let fileName), .detectingSpeakers(let fileName),
+             .polishing(let fileName):
             return fileName
         case .idle, .failed:
             return nil
@@ -187,7 +220,7 @@ final class FileTranscriptionViewModel {
             customTerms: runtime.customVocabulary.store.terms.map(\.term),
             learnedTerms: runtime.localLearning.store.learnedTerms
         )
-        let cleanup = runtime.textCleanup.settings
+        let cleanup = fileCleanup
         let engineName = Self.shortName(for: backend, fallback: catalog.engine(id: engineID)?.displayName ?? engineID)
         let wantsSpeakers = detectSpeakers
         let requestedSpeakers = speakerCount >= 2 ? speakerCount : nil
@@ -199,6 +232,7 @@ final class FileTranscriptionViewModel {
             title = ""
         }
         saveError = nil
+        polishNote = nil
         progressFraction = nil
         audioDuration = 0
         runningEngineName = engineName
@@ -245,6 +279,7 @@ final class FileTranscriptionViewModel {
         document = nil
         title = ""
         saveError = nil
+        polishNote = nil
         phase = .idle
     }
 
@@ -253,6 +288,7 @@ final class FileTranscriptionViewModel {
         document = saved
         title = saved.title
         saveError = nil
+        polishNote = nil
         phase = .idle
     }
 
@@ -449,16 +485,40 @@ final class FileTranscriptionViewModel {
             }.value
             guard self.runID == runID, !Task.isCancelled else { return }
 
+            var blocks = composition.blocks
+            var note: String?
+            if cleanup.aiCleanupEnabled, !blocks.isEmpty {
+                if let message = TranscriptPolishService.unavailableMessage {
+                    note = message + " The transcript wasn't polished."
+                } else {
+                    phase = .polishing(fileName: fileName)
+                    polishDone = 0
+                    polishTotal = blocks.count
+                    progressFraction = 0
+                    let outcome = await TranscriptPolishService.polish(blocks) { [weak self] done, total in
+                        guard let self, self.runID == runID else { return }
+                        self.polishDone = done
+                        self.progressFraction = total > 0 ? Double(done) / Double(total) : nil
+                    }
+                    guard self.runID == runID, !Task.isCancelled else { return }
+                    blocks = outcome.blocks
+                    note = outcome.kept == 0
+                        ? "Apple Intelligence polished all \(outcome.polished) paragraphs."
+                        : "Apple Intelligence polished \(outcome.polished) of \(blocks.count) paragraphs. \(outcome.kept) kept as transcribed because the edit changed too many words or took too long."
+                }
+            }
+
             let finished = FileTranscriptDocument(
                 title: title,
                 sourceFileName: fileName,
                 duration: extracted.duration,
                 engineName: engineName,
                 hasTimings: composition.hasTimings,
-                blocks: composition.blocks,
+                blocks: blocks,
                 subtitleSRT: composition.subtitleSRT
             )
             document = finished
+            polishNote = note
             progressFraction = nil
             phase = .idle
             persist(finished)
