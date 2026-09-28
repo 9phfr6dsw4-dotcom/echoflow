@@ -20,6 +20,7 @@
 - Dictate with Apple Speech, Parakeet v3, or Whisper large-v3-turbo. Models are installed only when you choose them.
 - Use a global hotkey and send finished text to the focused app.
 - Review, edit, and copy transcript history stored on your Mac. Customize vocabulary and optional correction learning.
+- Transcribe audio and video files into timestamped transcripts with optional speaker labels, and save them as text, Markdown, Word, or subtitles.
 - Optionally pause Music or Spotify while dictating.
 
 ## Screenshots
@@ -27,6 +28,10 @@
 ![EchoFlow Settings for transcript storage, microphone selection, and transcription language.](docs/images/echoflowmicro.png)
 
 *Settings*
+
+![EchoFlow Transcribe File screen for turning an audio or video file into a transcript.](docs/images/echoflow-transcribe-file.png)
+
+*Transcribe File*
 
 ![EchoFlow Speech Models screen listing the available transcription engines.](docs/images/Screenshot_2026-09-26_at_2.15.47_PM-1.png)
 
