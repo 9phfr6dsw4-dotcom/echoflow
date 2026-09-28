@@ -73,13 +73,14 @@ struct EchoFlowSettingsView: View {
             Button("Clear All Transcript Data", role: .destructive) {
                 do {
                     try history.clearAll()
+                    try FileTranscriptStore.standard().deleteAll()
                 } catch {
                     history.errorMessage = error.localizedDescription
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes EchoFlow transcript history and audio recordings, but does not delete Markdown archive files in your chosen folder or learned words. Files outside EchoFlow's transcript store are kept.")
+            Text("This removes EchoFlow transcript history, saved file transcripts, and audio recordings, but does not delete Markdown archive files in your chosen folder or learned words. Files outside EchoFlow's transcript store are kept.")
         }
         .onAppear {
             runtime.overlayModel.showLiveWords = showLiveWords
