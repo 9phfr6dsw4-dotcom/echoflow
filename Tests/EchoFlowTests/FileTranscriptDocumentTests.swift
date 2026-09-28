@@ -62,9 +62,9 @@ final class FileTranscriptDocumentTests: XCTestCase {
         let early = TranscriptBlockBuilder.blocks(
             from: [
                 TimedTextPiece(text: " As", start: 0.0, end: 0.3),
-                TimedTextPiece(text: " Zhou", start: 0.3, end: 0.6),
-                TimedTextPiece(text: " Enlai", start: 1.0, end: 1.3),
-                TimedTextPiece(text: " said.", start: 1.3, end: 1.6),
+                TimedTextPiece(text: " he", start: 0.3, end: 0.6),
+                TimedTextPiece(text: " put", start: 1.0, end: 1.3),
+                TimedTextPiece(text: " it.", start: 1.3, end: 1.6),
                 TimedTextPiece(text: " Right.", start: 2.0, end: 2.3),
                 TimedTextPiece(text: " Thanks.", start: 2.4, end: 2.8)
             ],
@@ -73,7 +73,7 @@ final class FileTranscriptDocumentTests: XCTestCase {
                 SpeakerTurn(speakerID: "B", start: 0.8, end: 3)
             ]
         )
-        XCTAssertEqual(early.map(\.text), ["As Zhou Enlai said.", "Right. Thanks."])
+        XCTAssertEqual(early.map(\.text), ["As he put it.", "Right. Thanks."])
 
         let interjection = TranscriptBlockBuilder.blocks(
             from: [
@@ -91,6 +91,55 @@ final class FileTranscriptDocumentTests: XCTestCase {
         )
         XCTAssertEqual(interjection.map(\.speakerID), ["A", "B", "A"])
         XCTAssertEqual(interjection.map(\.text), ["Go on.", "Yes.", "Then done."])
+    }
+
+    func testShortMidSentenceBlipsGoBackButRealInterruptionsStay() {
+        let blip = TranscriptBlockBuilder.blocks(
+            from: words([
+                (" Well", 0.0), (" I", 0.4), (" think", 0.8), (" there", 1.2),
+                (" was", 1.6), (" a", 2.0), (" strong", 2.4), (" sense", 2.8),
+                (" in", 3.2), (" Europe.", 3.6)
+            ]),
+            speakerTurns: [
+                SpeakerTurn(speakerID: "A", start: 0, end: 1.6),
+                SpeakerTurn(speakerID: "B", start: 1.6, end: 3.2),
+                SpeakerTurn(speakerID: "A", start: 3.2, end: 4.0)
+            ]
+        )
+        XCTAssertEqual(blip.map(\.speakerID), ["A"])
+        XCTAssertEqual(blip.map(\.text), ["Well I think there was a strong sense in Europe."])
+
+        let interruption = TranscriptBlockBuilder.blocks(
+            from: words([
+                (" It", 0.0), (" matters", 0.4), (" and", 0.8),
+                (" Fine.", 1.2), (" Say", 1.6), (" more?", 2.0),
+                (" Yes,", 2.4), (" it", 2.8), (" does.", 3.2)
+            ]),
+            speakerTurns: [
+                SpeakerTurn(speakerID: "A", start: 0, end: 1.2),
+                SpeakerTurn(speakerID: "B", start: 1.2, end: 2.4),
+                SpeakerTurn(speakerID: "A", start: 2.4, end: 3.6)
+            ]
+        )
+        XCTAssertEqual(interruption.map(\.speakerID), ["A", "B", "A"])
+        XCTAssertEqual(interruption.map(\.text), ["It matters and", "Fine. Say more?", "Yes, it does."])
+    }
+
+    func testACutOffSentenceKeepsTheNewSpeakersWords() {
+        let blocks = TranscriptBlockBuilder.blocks(
+            from: words([
+                (" We", 0.0), (" know", 0.4), (" it", 0.8), (" through", 1.2), (" the", 1.6),
+                (" land", 2.0), (" and", 2.4),
+                (" so", 2.8), (" I", 3.2), (" think", 3.6), (" that's", 4.0), (" right.", 4.4),
+                (" The", 4.8), (" British", 5.2), (" agree.", 5.6)
+            ]),
+            speakerTurns: [
+                SpeakerTurn(speakerID: "A", start: 0, end: 2.8),
+                SpeakerTurn(speakerID: "B", start: 2.8, end: 6.0)
+            ]
+        )
+        XCTAssertEqual(blocks.map(\.speakerID), ["A", "B"])
+        XCTAssertEqual(blocks.map(\.text), ["We know it through the land and", "so I think that's right. The British agree."])
     }
 
     func testParagraphsWithoutSpeakersBreakAtASentenceAfterThirtySeconds() {

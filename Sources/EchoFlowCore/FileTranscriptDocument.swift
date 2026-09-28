@@ -42,10 +42,18 @@ public enum TranscriptBlockBuilder {
     /// A single word given to a different speaker than the words on both sides of it is treated
     /// as a timing wobble when it is shorter than this.
     public static let speakerFlipMaximumSeconds: TimeInterval = 1
+    /// A short run of words given to another speaker in the middle of someone's sentence, with no
+    /// sentence end of its own, is treated as a detection wobble when it is no longer than this.
+    public static let speakerBlipMaximumWords = 6
+    public static let speakerBlipMaximumSeconds: TimeInterval = 2
     /// Speaker detection often marks a change a word or two late. A change that doesn't fall at a
-    /// sentence end is moved to the nearest one within this many words and seconds.
+    /// sentence end is moved back to the previous one within this many words and seconds.
     public static let speakerSnapMaximumWords = 12
     public static let speakerSnapMaximumSeconds: TimeInterval = 3.5
+    /// A change is moved forward only when the new speaker's first word is lowercase (it reads as
+    /// the rest of the previous sentence), and only this many words: otherwise the first speaker
+    /// was probably cut off, and the new speaker's words would be given to them.
+    public static let speakerForwardSnapMaximumWords = 2
 
     struct Word: Equatable {
         var text: String
@@ -64,6 +72,7 @@ public enum TranscriptBlockBuilder {
                 words[index].speakerID = speaker(forStart: words[index].start, end: words[index].end, in: turns)
             }
             smoothSpeakerFlips(&words)
+            mergeMidSentenceBlips(&words)
             snapSpeakerChangesToSentences(&words)
         }
         let target = hasSpeakers ? speakerParagraphTargetSeconds : paragraphTargetSeconds
@@ -144,10 +153,41 @@ public enum TranscriptBlockBuilder {
         }
     }
 
-    /// Moves each speaker change that doesn't fall at a sentence end to the nearest one: first
-    /// backwards (the new speaker's opening words were left with the previous speaker), otherwise
-    /// forwards (the previous speaker's last words went to the new speaker). A short turn that
-    /// is a complete sentence ("Yes.") is left alone.
+    /// A short run of words given to another speaker in the middle of someone's sentence, with the
+    /// same speaker on both sides and no sentence end of its own, goes back to the speaker around
+    /// it. A run with its own sentence end ("Fine. Can you say more?") is a real interruption and
+    /// is kept.
+    static func mergeMidSentenceBlips(_ words: inout [Word]) {
+        var start = 1
+        while start < words.count {
+            let surrounding = words[start - 1].speakerID
+            guard surrounding != nil, words[start].speakerID != surrounding,
+                  !endsSentence(words[start - 1].text) else {
+                start += 1
+                continue
+            }
+            var end = start
+            while end + 1 < words.count, words[end + 1].speakerID == words[start].speakerID {
+                end += 1
+            }
+            let isBlip = end + 1 < words.count
+                && words[end + 1].speakerID == surrounding
+                && end - start + 1 <= speakerBlipMaximumWords
+                && words[end].end - words[start].start <= speakerBlipMaximumSeconds
+                && !words[start...end].contains(where: { endsSentence($0.text) })
+            if isBlip {
+                for position in start...end { words[position].speakerID = surrounding }
+            }
+            start = end + 1
+        }
+    }
+
+    /// Moves each speaker change that doesn't fall at a sentence end: back to the previous sentence
+    /// end (the new speaker's opening words were left with the previous speaker), otherwise forward
+    /// by at most a word or two when those words continue the sentence in lowercase (the previous
+    /// speaker's last words went to the new speaker). When neither applies, the first speaker was
+    /// probably cut off, so the change stays where it is. A short turn that is a complete sentence
+    /// ("Yes.") is left alone.
     static func snapSpeakerChangesToSentences(_ words: inout [Word]) {
         var index = 1
         while index < words.count {
@@ -169,10 +209,10 @@ public enum TranscriptBlockBuilder {
                 }
                 candidate -= 1
             }
-            if !moved {
+            if !moved, startsLowercase(words[index].text) {
                 var ahead = index
                 while ahead < words.count,
-                      ahead - index + 1 <= speakerSnapMaximumWords,
+                      ahead - index + 1 <= speakerForwardSnapMaximumWords,
                       words[ahead].speakerID == next,
                       words[ahead].end - words[index].start <= speakerSnapMaximumSeconds {
                     if endsSentence(words[ahead].text) {
@@ -196,6 +236,10 @@ public enum TranscriptBlockBuilder {
 
     static func collapsedWhitespace(_ text: String) -> String {
         text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+
+    static func startsLowercase(_ text: String) -> Bool {
+        text.first(where: { !$0.isWhitespace })?.isLowercase ?? false
     }
 
     static func endsSentence(_ text: String) -> Bool {
