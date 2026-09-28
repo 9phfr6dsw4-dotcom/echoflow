@@ -207,3 +207,123 @@ struct LocalModelTranscriber {
         return cleaned
     }
 }
+
+/// Transcript of an imported file. `pieces` carries timings for subtitle export and is empty when
+/// the engine doesn't provide them.
+struct TimedFileTranscript: Sendable {
+    let text: String
+    let pieces: [TimedTextPiece]
+}
+
+extension LocalModelTranscriber {
+    /// Transcribes an imported audio file with Parakeet or Whisper and keeps timings for .srt export.
+    /// Parakeet handles long files with its built-in disk-backed chunking; Whisper uses VAD chunking.
+    static func transcribeFile(
+        backend: TranscriptionBackend,
+        audioURL: URL,
+        modelDirectory: URL,
+        languageIdentifier: String?,
+        vocabularyTerms: [String],
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws -> TimedFileTranscript {
+        switch backend {
+        case .parakeetV3:
+            return try await transcribeParakeetFile(
+                audioURL: audioURL,
+                modelDirectory: modelDirectory,
+                languageIdentifier: languageIdentifier,
+                onProgress: onProgress
+            )
+        case .whisperLargeV3Turbo:
+            return try await transcribeWhisperFile(
+                audioURL: audioURL,
+                modelDirectory: modelDirectory,
+                languageIdentifier: languageIdentifier,
+                vocabularyTerms: vocabularyTerms,
+                onProgress: onProgress
+            )
+        case .appleSpeech, .unavailable:
+            throw TranscriptionError.unavailableBackend(String(describing: backend))
+        }
+    }
+
+    private static func transcribeParakeetFile(
+        audioURL: URL,
+        modelDirectory: URL,
+        languageIdentifier: String?,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws -> TimedFileTranscript {
+        var language: Language?
+        if let code = normalizedLanguageCode(languageIdentifier) {
+            guard let supported = Language(rawValue: code) else {
+                throw TranscriptionError.unsupportedParakeetLanguage(languageIdentifier ?? code)
+            }
+            language = supported
+        }
+        let models = try AsrModels.loadLocal(
+            from: modelDirectory,
+            version: .v3,
+            encoderPrecision: .int8V2
+        )
+        let manager = AsrManager(config: .default, models: models)
+        let progressStream = await manager.transcriptionProgressStream
+        let progressTask = Task {
+            do {
+                for try await fraction in progressStream { onProgress(fraction) }
+            } catch {}
+        }
+        defer { progressTask.cancel() }
+        var decoderState = try TdtDecoderState()
+        let result = try await manager.transcribe(
+            audioURL,
+            decoderState: &decoderState,
+            language: language
+        )
+        let text = try nonempty(result.text)
+        let pieces = (result.tokenTimings ?? []).map { timing in
+            TimedTextPiece(text: timing.token, start: timing.startTime, end: timing.endTime)
+        }
+        return TimedFileTranscript(text: text, pieces: pieces)
+    }
+
+    private static func transcribeWhisperFile(
+        audioURL: URL,
+        modelDirectory: URL,
+        languageIdentifier: String?,
+        vocabularyTerms: [String],
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws -> TimedFileTranscript {
+        try await whisperCache.withModel(at: modelDirectory, load: { directory in
+            try await loadWhisperSession(from: directory)
+        }, operation: { session in
+            let promptText = TranscriptionVocabulary.whisperPromptText(from: vocabularyTerms)
+            let promptTokens = promptText.isEmpty ? nil : session.tokenizer.encode(text: promptText)
+            let options = DecodingOptions(
+                language: normalizedLanguageCode(languageIdentifier),
+                skipSpecialTokens: true,
+                withoutTimestamps: false,
+                promptTokens: promptTokens,
+                chunkingStrategy: .vad
+            )
+            let progressTask = Task {
+                while !Task.isCancelled {
+                    onProgress(session.whisper.progress.fractionCompleted)
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+            }
+            defer { progressTask.cancel() }
+            let results = try await session.whisper.transcribe(
+                audioPath: audioURL.path, decodeOptions: options
+            )
+            let text = try nonempty(results.map(\.text).joined(separator: " "))
+            let pieces = results.flatMap(\.segments).map { segment in
+                TimedTextPiece(
+                    text: " " + segment.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                    start: TimeInterval(segment.start),
+                    end: TimeInterval(segment.end)
+                )
+            }
+            return TimedFileTranscript(text: text, pieces: pieces)
+        })
+    }
+}

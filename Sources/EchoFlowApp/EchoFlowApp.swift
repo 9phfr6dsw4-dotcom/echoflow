@@ -27,6 +27,8 @@ struct EchoFlowApp: App {
                     .tabItem { Label("Home", systemImage: "house") }
                 ModelLibraryView()
                     .tabItem { Label("Speech Models", systemImage: "waveform") }
+                FileTranscriptionView()
+                    .tabItem { Label("Transcribe File", systemImage: "doc.text") }
                 EchoFlowSettingsView()
                     .tabItem { Label("Settings", systemImage: "gearshape") }
             }
