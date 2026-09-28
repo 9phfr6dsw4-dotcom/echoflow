@@ -224,6 +224,7 @@ extension LocalModelTranscriber {
         modelDirectory: URL,
         languageIdentifier: String?,
         vocabularyTerms: [String],
+        wordTimings: Bool = false,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async throws -> TimedFileTranscript {
         switch backend {
@@ -240,6 +241,7 @@ extension LocalModelTranscriber {
                 modelDirectory: modelDirectory,
                 languageIdentifier: languageIdentifier,
                 vocabularyTerms: vocabularyTerms,
+                wordTimings: wordTimings,
                 onProgress: onProgress
             )
         case .appleSpeech, .unavailable:
@@ -291,6 +293,7 @@ extension LocalModelTranscriber {
         modelDirectory: URL,
         languageIdentifier: String?,
         vocabularyTerms: [String],
+        wordTimings: Bool,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async throws -> TimedFileTranscript {
         try await whisperCache.withModel(at: modelDirectory, load: { directory in
@@ -302,6 +305,7 @@ extension LocalModelTranscriber {
                 language: normalizedLanguageCode(languageIdentifier),
                 skipSpecialTokens: true,
                 withoutTimestamps: false,
+                wordTimestamps: wordTimings,
                 promptTokens: promptTokens,
                 chunkingStrategy: .vad
             )
@@ -316,7 +320,19 @@ extension LocalModelTranscriber {
                 audioPath: audioURL.path, decodeOptions: options
             )
             let text = try nonempty(results.map(\.text).joined(separator: " "))
-            let pieces = results.flatMap(\.segments).map { segment in
+            let segments = results.flatMap(\.segments)
+            // Word timings (requested for speaker detection) let speaker changes fall between
+            // words; otherwise each segment is one timed piece.
+            let wordPieces: [TimedTextPiece] = wordTimings
+                ? segments.flatMap { segment -> [TimedTextPiece] in
+                    (segment.words ?? []).compactMap { word -> TimedTextPiece? in
+                        let spoken = word.word.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !spoken.isEmpty else { return nil }
+                        return TimedTextPiece(text: " " + spoken, start: TimeInterval(word.start), end: TimeInterval(word.end))
+                    }
+                }
+                : []
+            let pieces = !wordPieces.isEmpty ? wordPieces : segments.map { segment in
                 TimedTextPiece(
                     text: " " + segment.text.trimmingCharacters(in: .whitespacesAndNewlines),
                     start: TimeInterval(segment.start),
